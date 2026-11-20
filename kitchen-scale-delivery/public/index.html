@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>后厨秤离线称重单 · 归单与回执演示</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --line: #e3e6ea; --ink: #1f2430;
+    --sub: #6b7280; --brand: #1d4ed8; --brand-soft: #e8eefc;
+    --ok: #047857; --ok-soft: #e6f4ee; --warn: #b45309; --warn-soft: #fdf3e3;
+    --bad: #b91c1c; --bad-soft: #fdecec; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+  header { background: #10213f; color: #fff; padding: 22px 28px; }
+  header h1 { margin: 0 0 6px; font-size: 20px; }
+  header p { margin: 0; color: #b9c6dd; font-size: 13px; }
+  main { max-width: 1180px; margin: 0 auto; padding: 20px 24px 60px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
+  button { border: 1px solid var(--brand); background: var(--brand); color: #fff;
+    border-radius: 8px; padding: 10px 16px; font-size: 14px; cursor: pointer; }
+  button.secondary { background: #fff; color: var(--brand); }
+  button.ghost { background: transparent; color: var(--sub); border-color: var(--line); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin-bottom: 18px; }
+  .card h2 { margin: 0 0 12px; font-size: 16px; }
+  .rule-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .rule { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: #fafbfc; }
+  .rule h3 { margin: 0 0 6px; font-size: 13.5px; color: var(--brand); }
+  .rule p { margin: 0; font-size: 13px; color: #374151; }
+  code { font-family: var(--mono); background: #f1f3f6; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  .narrative li { margin-bottom: 4px; }
+  .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .metric { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #fafbfc; }
+  .metric .label { font-size: 12px; color: var(--sub); }
+  .metric .value { font-size: 22px; font-weight: 700; margin-top: 2px; font-family: var(--mono); }
+  .metric .delta { font-size: 12px; margin-top: 2px; font-family: var(--mono); }
+  .up { color: var(--ok); } .down { color: var(--bad); } .flat { color: var(--sub); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { color: var(--sub); font-weight: 600; background: #fafbfc; }
+  td.mono, th.mono { font-family: var(--mono); font-size: 12.5px; }
+  .tag { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 12px; white-space: nowrap; }
+  .tag.accepted { background: var(--ok-soft); color: var(--ok); }
+  .tag.duplicate { background: var(--brand-soft); color: var(--brand); }
+  .tag.conflict { background: var(--bad-soft); color: var(--bad); }
+  .tag.rejected { background: #f3f4f6; color: var(--sub); }
+  .tag.delivered { background: var(--ok-soft); color: var(--ok); }
+  .tag.pending { background: var(--warn-soft); color: var(--warn); }
+  .muted { color: var(--sub); }
+  .evidence-box { border-left: 4px solid var(--brand); background: var(--brand-soft);
+    border-radius: 8px; padding: 12px 14px; font-family: var(--mono); font-size: 12.5px;
+    word-break: break-all; margin-top: 10px; }
+  .table-wrap { overflow-x: auto; }
+  .empty { color: var(--sub); padding: 24px; text-align: center; }
+  .pill-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>后厨秤离线称重单 · 归单与回执演示</h1>
+  <p>原单先落盘 · 按「设备身份 + 本机序号」归单 · 一单一回执槽位 · 时钟回拨不影响唯一性（虚构数据）</p>
+</header>
+<main>
+  <section class="card">
+    <h2>归单规则说明（换机后重号怎么认）</h2>
+    <div class="rule-grid">
+      <div class="rule">
+        <h3>① 为什么按设备序号确认，而不是按已落库单据逐条确认</h3>
+        <p>本机序号是离线秤本地单调递增的天然标识，上传方手里就有，重传时能自己判重；若只按落库代理键确认，重传单在上传方与入库端之间没有共同身份，回执丢了无法对账。因此回执以业务键 <code>deviceId#seq</code> 对账，落库代理键仅作内部主键。</p>
+      </div>
+      <div class="rule">
+        <h3>② 时钟被校回去怎么办</h3>
+        <p>时间戳只用于展示，<b>不参与唯一性与排序</b>。换班后时钟回拨，序号仍单调递增，中班新单 <code>seq=4</code> 依然排在早班 <code>seq=3</code> 之后，净重总量按入库正式单累加，不受时间戳影响。</p>
+      </div>
+      <div class="rule">
+        <h3>③ 换机后序号重号怎么认</h3>
+        <p>业务键含设备身份：<code>SCALE-A-01#1</code> 与 <code>SCALE-B-07#1</code> 是两张不同的单、各占一个回执槽位。换机先做设备登记（设备历史可查），新设备从自己的 <code>seq=1</code> 起号也不会撞车。</p>
+      </div>
+      <div class="rule">
+        <h3>④ 补发为什么只占一个位置</h3>
+        <p>接收端每次投递都落原单（可追溯），入库端按业务键去重：内容一致的补发记为 <code>duplicate</code>，不新增正式单、不新增回执；内容被篡改记为 <code>conflict</code>，保留首单。回执槽位始终只有一个，丢包后重投的还是同一张回执。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="toolbar">
+    <button id="btn-receive">① 接收离线称重单</button>
+    <button id="btn-reconnect" disabled>② 模拟掉线补交</button>
+    <button id="btn-receipts" disabled>③ 查看称重回执</button>
+    <button id="btn-reset" class="ghost">重置演示</button>
+    <span id="step-hint" class="muted" style="align-self:center"></span>
+  </div>
+
+  <!-- 业务结果区: data-evidence-result 供操作前后内容核对 -->
+  <section class="card" id="result-card"
+           data-evidence-result="state=empty; step=0; raw=0; canonical=0; netWeightTotal=0; pendingConfirmation=0; receipts=0; delivered=0; duplicates=0; conflicts=0; rejected=0">
+    <h2>业务结果区（<code>data-evidence-result</code> 随每次操作更新）</h2>
+    <div id="result-body"><p class="muted">尚未执行操作。点击上方按钮，按 ① → ② → ③ 顺序跑一遍虚构场景。</p></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const btnReceive = $('btn-receive'), btnReconnect = $('btn-reconnect'),
+      btnReceipts = $('btn-receipts'), btnReset = $('btn-reset');
+const resultCard = $('result-card'), resultBody = $('result-body'), stepHint = $('step-hint');
+let currentStep = 0;
+
+function setButtons(step) {
+  currentStep = step;
+  btnReceive.disabled = step >= 1;
+  btnReconnect.disabled = step < 1 || step >= 2;
+  btnReceipts.disabled = step < 1;
+  stepHint.textContent = step === 0 ? '待开始'
+    : step === 1 ? '已完成①，可执行②（掉线补交）或③（查看回执）'
+    : '已完成①②，可重复查看③，或重置后重跑';
+}
+
+async function callApi(path) {
+  const res = await fetch(path, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function deltaHtml(before, after, key, suffix = '') {
+  const d = Math.round(((after[key] ?? 0) - (before[key] ?? 0)) * 1000) / 1000;
+  if (d === 0) return `<span class="delta flat">±0</span>`;
+  const cls = d > 0 ? 'up' : 'down';
+  return `<span class="delta ${cls}">${d > 0 ? '+' : ''}${d}${suffix}</span>`;
+}
+
+function statusTag(receipt) {
+  if (receipt.status === 'delivered') {
+    return `<span class="tag delivered">已送达${receipt.confirmedAt ? '·已确认' : ''}</span>`;
+  }
+  return `<span class="tag pending">待送达</span>`;
+}
+
+function rawKindTag(entry) {
+  const map = { raw: 'accepted', duplicate: 'duplicate', conflict: 'conflict', rejected: 'rejected' };
+  const label = { raw: '首次入库', duplicate: '幂等补发', conflict: '内容冲突', rejected: '拒收' };
+  return `<span class="tag ${map[entry.kind]}">${label[entry.kind]}</span>`;
+}
+
+function render(data) {
+  const { before, after, delta, narrative, snapshot, title } = data;
+  const m = after;
+
+  // 机器可读证据串: 核对操作前后只需比对该属性
+  const evidence =
+    `state=ran; step=${data.step}; title=${encodeURIComponent(title)}; ` +
+    `raw=${m.rawCount}; canonical=${m.canonicalCount}; netWeightTotal=${m.netWeightTotal}; ` +
+    `pendingConfirmation=${m.pendingConfirmationCount}; receipts=${m.receiptCount}; ` +
+    `delivered=${m.receiptsDelivered}; pendingDelivery=${m.receiptsPendingDelivery}; ` +
+    `duplicates=${m.duplicateCount}; conflicts=${m.conflictCount}; rejected=${m.rejectedCount}; ` +
+    `netByShift=${encodeURIComponent(JSON.stringify(m.netWeightByShift))}`;
+  resultCard.setAttribute('data-evidence-result', evidence);
+
+  const metricDefs = [
+    ['rawCount', '原单落盘数（不含拒收）'],
+    ['canonicalCount', '入库正式单'],
+    ['netWeightTotal', '净重总量（kg）'],
+    ['pendingConfirmationCount', '待确认单据（上传方视角）'],
+    ['receiptCount', '回执槽位'],
+    ['duplicateCount', '幂等补发'],
+    ['conflictCount', '冲突重传'],
+    ['rejectedCount', '拒收单据'],
+  ];
+
+  const metricCards = metricDefs.map(([key, label]) => `
+    <div class="metric">
+      <div class="label">${label}</div>
+      <div class="value">${m[key]}</div>
+      ${deltaHtml(before, after, key)}
+    </div>`).join('');
+
+  const receiptsRows = snapshot.receipts.map((r) => `
+    <tr>
+      <td class="mono">${esc(r.receiptId)}</td>
+      <td class="mono">${esc(r.key)}</td>
+      <td>${esc(r.shift)}</td>
+      <td>${esc(r.dish)}</td>
+      <td class="mono">${r.netWeight}</td>
+      <td>${statusTag(r)}</td>
+      <td class="mono">${r.deliveryAttempts}</td>
+      <td class="mono muted">${esc(r.deliveredAt || '—')}</td>
+      <td class="mono muted">${esc(r.confirmedAt || '—')}</td>
+    </tr>`).join('');
+
+  const canonicalRows = snapshot.canonical.map((d) => `
+    <tr>
+      <td class="mono">${esc(d.key)}</td>
+      <td>${esc(d.shift)}</td>
+      <td class="mono">${d.seq}</td>
+      <td>${esc(d.payload.dish || '')}</td>
+      <td class="mono">${d.payload.netWeight}</td>
+      <td class="mono muted">${esc(d.payload.weighedAt || '—')}</td>
+      <td>${d.conflicts.length
+        ? `<span class="tag conflict">冲突 ×${d.conflicts.length}</span>`
+        : '<span class="muted">—</span>'}</td>
+    </tr>`).join('');
+
+  const rawRows = snapshot.rawInbox.map((e) => `
+    <tr>
+      <td class="mono">${esc(e.inboxId)}</td>
+      <td class="mono">${esc(e.key || '—')}</td>
+      <td>${rawKindTag(e)}</td>
+      <td class="mono muted">${esc(e.payload && e.payload.weighedAt || '—')}</td>
+      <td>${e.error ? esc(e.error) : (e.duplicateOf ? `归并至正式单 #${e.duplicateOf}` : '进入入库端')}</td>
+    </tr>`).join('');
+
+  const shiftChips = Object.entries(m.netWeightByShift)
+    .map(([shift, w]) => `<span class="tag accepted">${esc(shift)} 净重合计 ${w} kg</span>`).join('');
+
+  resultBody.innerHTML = `
+    <h3 style="margin:2px 0 8px">步骤 ${data.step} · ${esc(title)}</h3>
+    <ul class="narrative muted">${narrative.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+    <div class="metric-grid">${metricCards}</div>
+    <div class="pill-row">${shiftChips || '<span class="muted">暂无班次净重</span>'}</div>
+    <div class="evidence-box">data-evidence-result = ${esc(evidence)}</div>
+
+    <h3 style="margin:18px 0 8px">称重回执（一单一个槽位）</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>回执号</th><th>业务键</th><th>班次</th><th>菜品</th><th>净重</th>
+          <th>状态</th><th>投递次数</th><th>送达时间</th><th>确认时间</th>
+        </tr></thead>
+        <tbody>${receiptsRows || '<tr><td colspan="9" class="empty">暂无回执</td></tr>'}</tbody>
+      </table>
+    </div>
+
+    <h3 style="margin:18px 0 8px">入库正式单（按设备序号归单，净重总量以此为准）</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>业务键</th><th>班次</th><th>本机序号</th><th>菜品</th><th>净重(kg)</th>
+          <th>称重时间(可能回拨)</th><th>冲突</th>
+        </tr></thead>
+        <tbody>${canonicalRows || '<tr><td colspan="7" class="empty">暂无入库单</td></tr>'}</tbody>
+      </table>
+    </div>
+
+    <h3 style="margin:18px 0 8px">接收端原单流水（每次投递都留痕，共 ${snapshot.rawInbox.length} 行）</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>原单流水</th><th>业务键</th><th>判定</th><th>称重时间</th><th>处理说明</th></tr></thead>
+        <tbody>${rawRows || '<tr><td colspan="5" class="empty">暂无原单</td></tr>'}</tbody>
+      </table>
+    </div>
+
+    ${snapshot.deviceHistory.length ? `
+    <h3 style="margin:18px 0 8px">换机登记</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>时间</th><th>原设备</th><th>新设备</th><th>原因</th></tr></thead>
+      <tbody>${snapshot.deviceHistory.map((h) => `
+        <tr><td class="mono muted">${esc(h.at)}</td><td class="mono">${esc(h.oldDeviceId)}</td>
+        <td class="mono">${esc(h.newDeviceId)}</td><td>${esc(h.reason)}</td></tr>`).join('')}</tbody>
+    </table></div>` : ''}
+  `;
+}
+
+async function run(btn, path, step) {
+  btn.disabled = true;
+  try {
+    const data = await callApi(path);
+    render(data);
+    setButtons(step);
+  } catch (err) {
+    alert('操作失败: ' + err.message);
+    setButtons(currentStep);
+  }
+}
+
+btnReceive.addEventListener('click', () => run(btnReceive, '/api/demo/receive', 1));
+btnReconnect.addEventListener('click', () => run(btnReconnect, '/api/demo/reconnect', 2));
+btnReceipts.addEventListener('click', () => run(btnReceipts, '/api/demo/receipts', Math.max(currentStep, 3)));
+btnReset.addEventListener('click', async () => {
+  await callApi('/api/demo/reset');
+  resultBody.innerHTML = '<p class="muted">已重置。点击①开始重新演示。</p>';
+  resultCard.setAttribute('data-evidence-result',
+    'state=empty; step=0; raw=0; canonical=0; netWeightTotal=0; pendingConfirmation=0; receipts=0; delivered=0; duplicates=0; conflicts=0; rejected=0');
+  setButtons(0);
+});
+
+setButtons(0);
+</script>
+</body>
+</html>
